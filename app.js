@@ -536,14 +536,22 @@
   function updateCaption(){
     const page = pages[readerPageIndex];
     let txt = 'Página '+(readerPageIndex+1)+' de '+pages.length;
-    if(page.frames.length) txt += '  ·  Quadro '+(readerFrameIndex+1)+' de '+page.frames.length;
+    if(page.frames.length){
+      txt += readerFrameIndex === -1
+        ? '  ·  Página completa'
+        : '  ·  Quadro '+(readerFrameIndex+1)+' de '+page.frames.length;
+    }
     readerCaption.textContent = txt;
   }
 
   function readerNext(){
     const frames = pages[readerPageIndex].frames;
-    if(readerFrameIndex < frames.length-1){
+    if(readerFrameIndex >= 0 && readerFrameIndex < frames.length-1){
       readerFrameIndex++;
+      applyReaderTransform(false);
+    } else if(readerFrameIndex >= 0 && readerFrameIndex === frames.length-1){
+      // acabaram os quadros: mostra a página inteira antes de virar a página
+      readerFrameIndex = -1;
       applyReaderTransform(false);
     } else if(readerPageIndex < pages.length-1){
       readerPageIndex++;
@@ -552,7 +560,12 @@
     }
   }
   function readerPrev(){
-    if(readerFrameIndex > 0){
+    const frames = pages[readerPageIndex].frames;
+    if(readerFrameIndex === -1 && frames.length > 0){
+      // estava vendo a página inteira (pós-quadros): volta pro último quadro
+      readerFrameIndex = frames.length-1;
+      applyReaderTransform(false);
+    } else if(readerFrameIndex > 0){
       readerFrameIndex--;
       applyReaderTransform(false);
     } else if(readerPageIndex > 0){
