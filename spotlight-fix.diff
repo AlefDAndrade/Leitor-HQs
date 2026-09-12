@@ -1,0 +1,119 @@
+--- a/index.html	2026-09-12 18:51:41.765778025 +0000
++++ b/index.html	2026-09-12 18:51:48.355495491 +0000
+@@ -208,6 +208,10 @@
+   }
+   #reader.open{ display:block; }
+   #reader-img{ position:absolute; transform-origin:0 0; will-change:transform; }
++  #reader-spotlight{
++    position:absolute; pointer-events:none; z-index:3; opacity:0;
++    box-shadow: 0 0 0 9999px rgba(6,7,11,.62);
++  }
+   .reader-zone{ position:absolute; top:0; bottom:0; }
+   .reader-zone.left{ left:0; width:38%; cursor:w-resize; }
+   .reader-zone.right{ left:38%; right:0; cursor:e-resize; }
+@@ -315,6 +319,7 @@
+ 
+   <div id="reader">
+     <img id="reader-img" alt="">
++    <div id="reader-spotlight"></div>
+     <div class="reader-zone left" id="reader-left"></div>
+     <div class="reader-zone right" id="reader-right"></div>
+     <div class="reader-chevron l">‹</div>
+@@ -764,6 +769,7 @@
+   // ---------------- Reader mode ----------------
+   const readerEl = el('reader');
+   const readerImg = el('reader-img');
++  const readerSpotlight = el('reader-spotlight');
+   const readerCaption = el('reader-caption');
+   const readerHint = el('reader-hint');
+ 
+@@ -824,6 +830,26 @@
+       requestAnimationFrame(() => { readerImg.style.transition = 'transform 0.45s cubic-bezier(.22,.61,.36,1)'; });
+     }
+     readerImg.style.transform = 'translate('+tx+'px,'+ty+'px) scale('+scale+')';
++
++    // Spotlight: darken everything outside the marked frame, leave the frame itself clear.
++    // No spotlight when there's no marked frame (whole page is "in focus").
++    const hasFrame = readerFrameIndex >= 0 && !!frames[readerFrameIndex];
++    const spotTransition = 'left .45s cubic-bezier(.22,.61,.36,1), top .45s cubic-bezier(.22,.61,.36,1), width .45s cubic-bezier(.22,.61,.36,1), height .45s cubic-bezier(.22,.61,.36,1), opacity .3s';
++    readerSpotlight.style.transition = instant ? 'none' : spotTransition;
++    if(hasFrame){
++      readerSpotlight.style.left = (offsetX + tx + fx*baseW*scale) + 'px';
++      readerSpotlight.style.top = (offsetY + ty + fy*baseH*scale) + 'px';
++      readerSpotlight.style.width = (fw*baseW*scale) + 'px';
++      readerSpotlight.style.height = (fh*baseH*scale) + 'px';
++      readerSpotlight.style.opacity = '1';
++    } else {
++      readerSpotlight.style.opacity = '0';
++    }
++    if(instant){
++      readerSpotlight.getBoundingClientRect();
++      requestAnimationFrame(() => { readerSpotlight.style.transition = spotTransition; });
++    }
++
+     updateCaption();
+   }
+ 
+--- a/app.js	2026-09-12 18:51:41.766469641 +0000
++++ b/app.js	2026-09-12 18:51:48.362326196 +0000
+@@ -144,6 +144,12 @@
+   let rarSupportPromise = null;
+   function loadRarSupport(){
+     if(!rarSupportPromise){
++      // O módulo é carregado localmente (pasta ./libarchive) porque:
++      // 1) a versão da CDN não expõe main.js (só existe dist/libarchive.js);
++      // 2) navegadores proíbem criar um Worker cujo script fique em outra
++      //    origem (ex.: uma CDN) — precisa ser da mesma origem da página.
++      // Por isso os arquivos libarchive.js, worker-bundle.js e libarchive.wasm
++      // ficam junto do app, e o worker é apontado para o arquivo local.
+       rarSupportPromise = import('./libarchive/libarchive.js').then(mod => {
+         mod.Archive.init({ workerUrl: 'libarchive/worker-bundle.js' });
+         return mod.Archive;
+@@ -435,6 +441,7 @@
+   // ---------------- Reader mode ----------------
+   const readerEl = el('reader');
+   const readerImg = el('reader-img');
++  const readerSpotlight = el('reader-spotlight');
+   const readerCaption = el('reader-caption');
+   const readerHint = el('reader-hint');
+ 
+@@ -495,6 +502,26 @@
+       requestAnimationFrame(() => { readerImg.style.transition = 'transform 0.45s cubic-bezier(.22,.61,.36,1)'; });
+     }
+     readerImg.style.transform = 'translate('+tx+'px,'+ty+'px) scale('+scale+')';
++
++    // Spotlight: darken everything outside the marked frame, leave the frame itself clear.
++    // No spotlight when there's no marked frame (whole page is "in focus").
++    const hasFrame = readerFrameIndex >= 0 && !!frames[readerFrameIndex];
++    const spotTransition = 'left .45s cubic-bezier(.22,.61,.36,1), top .45s cubic-bezier(.22,.61,.36,1), width .45s cubic-bezier(.22,.61,.36,1), height .45s cubic-bezier(.22,.61,.36,1), opacity .3s';
++    readerSpotlight.style.transition = instant ? 'none' : spotTransition;
++    if(hasFrame){
++      readerSpotlight.style.left = (offsetX + tx + fx*baseW*scale) + 'px';
++      readerSpotlight.style.top = (offsetY + ty + fy*baseH*scale) + 'px';
++      readerSpotlight.style.width = (fw*baseW*scale) + 'px';
++      readerSpotlight.style.height = (fh*baseH*scale) + 'px';
++      readerSpotlight.style.opacity = '1';
++    } else {
++      readerSpotlight.style.opacity = '0';
++    }
++    if(instant){
++      readerSpotlight.getBoundingClientRect();
++      requestAnimationFrame(() => { readerSpotlight.style.transition = spotTransition; });
++    }
++
+     updateCaption();
+   }
+ 
+--- a/style.css	2026-09-12 18:51:41.399495077 +0000
++++ b/style.css	2026-09-12 18:51:48.360210417 +0000
+@@ -199,6 +199,10 @@
+   }
+   #reader.open{ display:block; }
+   #reader-img{ position:absolute; transform-origin:0 0; will-change:transform; }
++  #reader-spotlight{
++    position:absolute; pointer-events:none; z-index:3; opacity:0;
++    box-shadow: 0 0 0 9999px rgba(6,7,11,.62);
++  }
+   .reader-zone{ position:absolute; top:0; bottom:0; }
+   .reader-zone.left{ left:0; width:38%; cursor:w-resize; }
+   .reader-zone.right{ left:38%; right:0; cursor:e-resize; }

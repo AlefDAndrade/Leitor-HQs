@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leitor de Quadros — marque painéis, leia quadro a quadro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink: #12141c;
+    --ink-2: #191c27;
+    --panel: #1d2130;
+    --line: #2b3042;
+    --line-soft: #242838;
+    --paper: #e7dfc9;
+    --paper-edge: #d6cbac;
+    --text: #e9e6da;
+    --muted: #838aa0;
+    --accent: #e8432c;
+    --accent-soft: rgba(232,67,44,0.16);
+    --accent2: #57c2d6;
+    --accent2-soft: rgba(87,194,214,0.18);
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Archivo', system-ui, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--ink); color:var(--text);
+    font-family:var(--sans); overflow:hidden;
+  }
+  button{font-family:var(--sans); cursor:pointer;}
+  ::selection{background:var(--accent-soft);}
+
+  /* ---------- Top bar ---------- */
+  #topbar{
+    height:56px; display:flex; align-items:center; gap:10px;
+    padding:0 14px; background:var(--ink-2); border-bottom:1px solid var(--line);
+    position:relative; z-index:20;
+  }
+  .wordmark{
+    font-family:var(--mono); font-weight:700; font-size:14px; letter-spacing:0.02em;
+    color:var(--text); display:flex; align-items:center; gap:8px; margin-right:6px; white-space:nowrap;
+  }
+  .wordmark .dot{width:8px;height:8px;background:var(--accent);border-radius:50%; box-shadow:0 0 0 3px var(--accent-soft);}
+  .topbtn{
+    background:transparent; border:1px solid var(--line); color:var(--text);
+    padding:8px 12px; border-radius:3px; font-size:13px; font-weight:500;
+    display:flex; align-items:center; gap:6px; transition:border-color .15s, background .15s;
+  }
+  .topbtn:hover{border-color:var(--muted); background:var(--panel);}
+  .topbtn.primary{border-color:var(--accent); color:var(--accent);}
+  .topbtn.primary:hover{background:var(--accent-soft);}
+  .topbtn:disabled{opacity:.35; cursor:not-allowed;}
+  .topbtn:disabled:hover{background:transparent; border-color:var(--line);}
+  #status{
+    font-family:var(--mono); font-size:12px; color:var(--muted); margin-left:4px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto;
+  }
+  .spacer{flex:1;}
+  .helpbtn{
+    width:30px;height:30px;border-radius:50%; border:1px solid var(--line); background:transparent;
+    color:var(--muted); font-family:var(--mono); font-size:13px; display:flex; align-items:center; justify-content:center;
+  }
+  .helpbtn:hover{border-color:var(--accent2); color:var(--accent2);}
+
+  /* ---------- Layout ---------- */
+  #app{ display:flex; height:calc(100% - 56px); }
+  #thumbs{
+    width:112px; background:var(--ink-2); border-right:1px solid var(--line);
+    overflow-y:auto; padding:10px 8px; display:flex; flex-direction:column; gap:8px; flex-shrink:0;
+  }
+  .thumb{
+    position:relative; border:1px solid var(--line); border-radius:2px; overflow:hidden;
+    cursor:pointer; background:var(--panel);
+  }
+  .thumb img{ width:100%; display:block; }
+  .thumb.active{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .thumb .n{
+    position:absolute; top:3px; left:3px; font-family:var(--mono); font-size:10px;
+    background:rgba(18,20,28,.75); padding:1px 4px; border-radius:2px; color:var(--muted);
+  }
+  .thumb .badge{
+    position:absolute; bottom:3px; right:3px; font-family:var(--mono); font-size:10px;
+    min-width:15px; text-align:center; padding:1px 3px; border-radius:8px;
+    background:var(--line-soft); color:var(--muted);
+  }
+  .thumb .badge.has{ background:var(--accent); color:#1a0805; font-weight:700; }
+
+  #stage-col{ flex:1; display:flex; flex-direction:column; min-width:0; position:relative; }
+  #stage{
+    flex:1; display:flex; align-items:center; justify-content:center; overflow:auto;
+    background:
+      radial-gradient(ellipse at 50% 30%, #191d29 0%, var(--ink) 70%);
+    padding:28px; position:relative;
+  }
+  #empty-state{
+    text-align:center; max-width:420px; color:var(--muted);
+  }
+  #empty-state h2{ font-family:var(--mono); color:var(--text); font-size:16px; font-weight:500; margin:0 0 10px; }
+  #empty-state p{ font-size:13.5px; line-height:1.6; margin:0 0 18px; }
+  #dropzone{
+    border:1.5px dashed var(--line); border-radius:4px; padding:28px 20px;
+    transition:border-color .15s, background .15s;
+  }
+  #dropzone.drag{ border-color:var(--accent); background:var(--accent-soft); }
+
+  .mat{
+    background:var(--paper); padding:14px; box-shadow:0 30px 60px -20px rgba(0,0,0,.6);
+    position:relative; border:1px solid var(--paper-edge);
+  }
+  .mat::before{
+    content:''; position:absolute; inset:6px; border:1px solid rgba(0,0,0,.08); pointer-events:none;
+  }
+  #page-wrap{ position:relative; line-height:0; }
+  #page-img{ display:block; max-width:calc(100vw - 420px); max-height:calc(100vh - 190px); width:auto; height:auto; user-select:none; -webkit-user-drag:none; }
+  #frame-layer{ position:absolute; inset:0; }
+  #frame-layer.add-mode{ cursor:crosshair; }
+
+  .frame{
+    position:absolute; border-radius:1px; background:transparent;
+  }
+  .frame .fill{ position:absolute; inset:0; background:var(--accent-soft); opacity:.55; }
+  .frame.selected .fill{ background:var(--accent2-soft); }
+  .frame .corner{ position:absolute; width:14px; height:14px; }
+  .frame .corner.tl{ top:-1px; left:-1px; border-top:2px solid var(--accent); border-left:2px solid var(--accent); }
+  .frame .corner.tr{ top:-1px; right:-1px; border-top:2px solid var(--accent); border-right:2px solid var(--accent); }
+  .frame .corner.bl{ bottom:-1px; left:-1px; border-bottom:2px solid var(--accent); border-left:2px solid var(--accent); }
+  .frame .corner.br{ bottom:-1px; right:-1px; border-bottom:2px solid var(--accent); border-right:2px solid var(--accent); }
+  .frame.selected .corner{ border-color:var(--accent2); }
+  .frame .num{
+    position:absolute; top:2px; left:2px; font-family:var(--mono); font-size:10px; font-weight:700;
+    background:var(--accent); color:#1a0805; padding:1px 5px; border-radius:2px; line-height:1.5;
+  }
+  .frame.selected .num{ background:var(--accent2); }
+  .frame-preview{ position:absolute; border:1.5px dashed var(--accent); background:var(--accent-soft); pointer-events:none; }
+
+  .handle{ position:absolute; width:9px; height:9px; background:var(--accent2); border:1px solid var(--ink); }
+  .handle.nw{ top:-5px; left:-5px; cursor:nwse-resize; }
+  .handle.n { top:-5px; left:calc(50% - 4px); cursor:ns-resize; }
+  .handle.ne{ top:-5px; right:-5px; cursor:nesw-resize; }
+  .handle.e { top:calc(50% - 4px); right:-5px; cursor:ew-resize; }
+  .handle.se{ bottom:-5px; right:-5px; cursor:nwse-resize; }
+  .handle.s { bottom:-5px; left:calc(50% - 4px); cursor:ns-resize; }
+  .handle.sw{ bottom:-5px; left:-5px; cursor:nesw-resize; }
+  .handle.w { top:calc(50% - 4px); left:-5px; cursor:ew-resize; }
+
+  #toolbar{
+    display:flex; align-items:center; gap:10px; padding:10px 16px; background:var(--ink-2);
+    border-top:1px solid var(--line); flex-shrink:0;
+  }
+  .navgrp{ display:flex; align-items:center; gap:6px; }
+  .iconbtn{
+    width:32px; height:32px; border-radius:3px; border:1px solid var(--line); background:transparent;
+    color:var(--text); display:flex; align-items:center; justify-content:center; font-size:15px;
+  }
+  .iconbtn:hover{ border-color:var(--muted); }
+  .iconbtn:disabled{ opacity:.3; cursor:not-allowed; }
+  #page-counter{ font-family:var(--mono); font-size:12px; color:var(--muted); min-width:76px; text-align:center; }
+  #add-frame-btn{
+    background:transparent; border:1px solid var(--line); color:var(--text); padding:8px 14px;
+    border-radius:3px; font-size:13px; font-weight:500; display:flex; align-items:center; gap:8px;
+  }
+  #add-frame-btn .sw{ width:9px; height:9px; border:1.5px solid var(--muted); }
+  #add-frame-btn.active{ border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
+  #add-frame-btn.active .sw{ border-color:var(--accent); background:var(--accent); }
+  #read-btn{
+    margin-left:auto; background:var(--accent); border:1px solid var(--accent); color:#1a0805;
+    padding:8px 16px; border-radius:3px; font-size:13px; font-weight:700;
+  }
+  #read-btn:hover{ filter:brightness(1.08); }
+  #read-btn:disabled{ opacity:.3; cursor:not-allowed; filter:none; }
+
+  #panel-frames{
+    width:230px; border-left:1px solid var(--line); background:var(--ink-2); flex-shrink:0;
+    display:flex; flex-direction:column;
+  }
+  #panel-frames h3{
+    font-family:var(--mono); font-size:11px; font-weight:500; color:var(--muted); text-transform:none;
+    margin:0; padding:12px 14px 4px; letter-spacing:.01em;
+  }
+  #panel-frames .hint{ font-size:11.5px; color:var(--muted); padding:0 14px 10px; line-height:1.5; }
+  #frame-list{ list-style:none; margin:0; padding:0 8px 12px; overflow-y:auto; flex:1; }
+  #frame-list li{
+    display:flex; align-items:center; gap:8px; padding:8px 8px; margin-bottom:4px;
+    border:1px solid var(--line); border-radius:3px; background:var(--panel); font-size:12.5px;
+    cursor:grab;
+  }
+  #frame-list li.selected{ border-color:var(--accent2); background:var(--accent2-soft); }
+  #frame-list li .idx{
+    font-family:var(--mono); font-weight:700; font-size:11px; width:20px; height:20px; border-radius:50%;
+    background:var(--line-soft); color:var(--muted); display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  #frame-list li.selected .idx{ background:var(--accent2); color:#062026; }
+  #frame-list li .lbl{ flex:1; color:var(--text); }
+  #frame-list li .del{
+    width:20px; height:20px; border-radius:2px; border:none; background:transparent; color:var(--muted);
+    font-size:14px; line-height:1; flex-shrink:0;
+  }
+  #frame-list li .del:hover{ color:var(--accent); }
+  #frame-list .empty{ color:var(--muted); font-size:12px; padding:10px 6px; line-height:1.6; }
+
+  /* ---------- Reader ---------- */
+  #reader{
+    position:fixed; inset:0; background:#08090d; z-index:100; display:none;
+    overflow:hidden;
+  }
+  #reader.open{ display:block; }
+  #reader-img{ position:absolute; transform-origin:0 0; will-change:transform; }
+  #reader-spotlight{
+    position:absolute; pointer-events:none; z-index:3; opacity:0;
+    box-shadow: 0 0 0 9999px rgba(6,7,11,.62);
+  }
+  .reader-zone{ position:absolute; top:0; bottom:0; }
+  .reader-zone.left{ left:0; width:38%; cursor:w-resize; }
+  .reader-zone.right{ left:38%; right:0; cursor:e-resize; }
+  .reader-chevron{
+    position:absolute; top:50%; transform:translateY(-50%); font-family:var(--mono); font-size:26px;
+    color:rgba(255,255,255,.28); pointer-events:none; transition:color .15s;
+  }
+  .reader-chevron.l{ left:14px; }
+  .reader-chevron.r{ right:14px; }
+  .reader-zone:hover + .reader-chevron, .reader-zone.left:hover ~ .reader-chevron.l, .reader-zone.right:hover ~ .reader-chevron.r{ color:rgba(255,255,255,.7); }
+  #reader-close{
+    position:absolute; top:16px; right:16px; width:34px; height:34px; border-radius:50%;
+    background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.16); color:#e9e6da;
+    font-size:16px; display:flex; align-items:center; justify-content:center; z-index:5;
+  }
+  #reader-close:hover{ background:rgba(255,255,255,.14); }
+  #reader-caption{
+    position:absolute; bottom:18px; left:50%; transform:translateX(-50%); font-family:var(--mono);
+    font-size:12px; color:rgba(255,255,255,.55); background:rgba(0,0,0,.35); padding:6px 12px;
+    border-radius:20px; letter-spacing:.02em; z-index:5; pointer-events:none;
+  }
+  #reader-hint{
+    position:absolute; top:20px; left:50%; transform:translateX(-50%); font-family:var(--sans);
+    font-size:13px; color:rgba(255,255,255,.75); background:rgba(0,0,0,.4); padding:8px 16px;
+    border-radius:20px; z-index:5; transition:opacity .5s; pointer-events:none;
+  }
+
+  /* ---------- Help popover ---------- */
+  #help-pop{
+    position:absolute; top:52px; right:14px; width:260px; background:var(--panel);
+    border:1px solid var(--line); border-radius:4px; padding:14px; z-index:30; display:none;
+    box-shadow:0 20px 40px rgba(0,0,0,.4);
+  }
+  #help-pop.open{ display:block; }
+  #help-pop h4{ margin:0 0 10px; font-family:var(--mono); font-size:12px; color:var(--text); font-weight:500; }
+  #help-pop .row{ display:flex; justify-content:space-between; gap:10px; font-size:12px; color:var(--muted); padding:4px 0; }
+  #help-pop kbd{ font-family:var(--mono); background:var(--line-soft); color:var(--text); padding:1px 6px; border-radius:3px; font-size:11px; }
+
+  input[type=file]{ display:none; }
+
+  @media (max-width: 760px){
+    #thumbs{ width:76px; }
+    #page-img{ max-width:calc(100vw - 300px); }
+    #panel-frames{ width:180px; }
+    .wordmark span.full{ display:none; }
+  }
+
+</style>
+</head>
+<body>
+
+  <div id="topbar">
+    <div class="wordmark"><span class="dot"></span><span class="full">Leitor de Quadros</span></div>
+    <button class="topbtn primary" id="import-btn">+ Importar quadrinho</button>
+    <input type="file" id="file-input" multiple accept="image/*,.cbz,.zip,.cbr,.rar,.pdf">
+    <button class="topbtn" id="save-frames-btn" disabled>Salvar marcações</button>
+    <button class="topbtn" id="load-frames-btn" disabled>Carregar marcações</button>
+    <input type="file" id="frames-json-input" accept="application/json">
+    <button class="topbtn" id="clear-btn" disabled>Limpar tudo</button>
+    <div id="status"></div>
+    <div class="spacer"></div>
+    <button class="helpbtn" id="help-btn" title="Atalhos">?</button>
+  </div>
+
+  <div id="help-pop">
+    <h4>Atalhos</h4>
+    <div class="row"><span>Ativar/desativar marcação</span><kbd>F</kbd></div>
+    <div class="row"><span>Apagar quadro selecionado</span><kbd>Del</kbd></div>
+    <div class="row"><span>Página anterior / próxima</span><kbd>←</kbd><kbd>→</kbd></div>
+    <div class="row"><span>Iniciar leitura guiada</span><kbd>Enter</kbd></div>
+    <div class="row"><span>Avançar / voltar (leitura)</span><kbd>→</kbd><kbd>←</kbd></div>
+    <div class="row"><span>Fechar leitura / desselecionar</span><kbd>Esc</kbd></div>
+  </div>
+
+  <div id="app">
+    <div id="thumbs"></div>
+
+    <div id="stage-col">
+      <div id="stage">
+        <div id="empty-state">
+          <div id="dropzone">
+            <h2>Nenhum quadrinho carregado</h2>
+            <p>Importe imagens soltas, um arquivo .cbz/.zip, .cbr/.rar ou um PDF do seu computador. Nada é enviado a nenhum servidor — tudo roda aqui no navegador.</p>
+            <button class="topbtn primary" id="dropzone-btn">Escolher arquivos</button>
+          </div>
+        </div>
+      </div>
+      <div id="toolbar" style="display:none;">
+        <button id="add-frame-btn"><span class="sw"></span>Marcar quadros</button>
+        <div class="navgrp">
+          <button class="iconbtn" id="prev-page">‹</button>
+          <span id="page-counter">1 / 1</span>
+          <button class="iconbtn" id="next-page">›</button>
+        </div>
+        <button id="read-btn">▶ Ler quadro a quadro</button>
+      </div>
+    </div>
+
+    <div id="panel-frames" style="display:none;">
+      <h3>Ordem de leitura</h3>
+      <div class="hint">Arraste para reordenar os quadros desta página.</div>
+      <ul id="frame-list"></ul>
+    </div>
+  </div>
+
+  <div id="reader">
+    <img id="reader-img" alt="">
+    <div id="reader-spotlight"></div>
+    <div class="reader-zone left" id="reader-left"></div>
+    <div class="reader-zone right" id="reader-right"></div>
+    <div class="reader-chevron l">‹</div>
+    <div class="reader-chevron r">›</div>
+    <button id="reader-close">✕</button>
+    <div id="reader-caption"></div>
+    <div id="reader-hint">Clique nas laterais ou use ← → para avançar</div>
+  </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+(function(){
+  "use strict";
+  if (window['pdfjsLib']) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  // ---------------- State ----------------
+  let pages = [];            // {id,name,url,frames:[{id,x,y,w,h}]}
+  let pageIdSeq = 1, frameIdSeq = 1;
+  let currentPageIndex = -1;
+  let addFrameMode = false;
+  let selectedFrameId = null;
+
+  let readerOpen = false;
+  let readerPageIndex = 0;
+  let readerFrameIndex = -1;
+
+  // ---------------- Elements ----------------
+  const el = (id) => document.getElementById(id);
+  const thumbsEl = el('thumbs');
+  const stageEl = el('stage');
+  const toolbarEl = el('toolbar');
+  const panelFramesEl = el('panel-frames');
+  const frameListEl = el('frame-list');
+  const statusEl = el('status');
+  const pageCounterEl = el('page-counter');
+  const addFrameBtn = el('add-frame-btn');
+  const readBtn = el('read-btn');
+
+  function setStatus(msg){ statusEl.textContent = msg || ''; }
+  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+  function naturalSort(a,b){ return a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'}); }
+  function currentPage(){ return currentPageIndex>=0 ? pages[currentPageIndex] : null; }
+
+  // ---------------- Import: images / cbz / pdf ----------------
+  el('import-btn').onclick = () => el('file-input').click();
+  el('dropzone-btn').onclick = () => el('file-input').click();
+  el('file-input').addEventListener('change', (e) => handleFiles(e.target.files));
+
+  const dropzone = el('dropzone');
+  ['dragenter','dragover'].forEach(evt => stageEl.addEventListener(evt, e => {
+    e.preventDefault();
+    if(currentPageIndex === -1) dropzone.classList.add('drag');
+  }));
+  ['dragleave','drop'].forEach(evt => stageEl.addEventListener(evt, e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+  }));
+  stageEl.addEventListener('drop', e => {
+    if(e.dataTransfer.files && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+  });
+
+  async function handleFiles(fileList){
+    const files = Array.from(fileList);
+    if(!files.length) return;
+    const wasEmpty = pages.length === 0;
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    const cbzFiles = files.filter(f => /\.(cbz|zip)$/i.test(f.name));
+    const pdfFiles = files.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+    const cbrFiles = files.filter(f => /\.(cbr|rar)$/i.test(f.name));
+
+    imageFiles.sort((a,b) => naturalSort(a.name,b.name));
+    for(const f of imageFiles){
+      addPage(f.name, URL.createObjectURL(f));
+    }
+
+    for(const f of cbzFiles){
+      setStatus('Lendo ' + f.name + '…');
+      try{
+        const zip = await JSZip.loadAsync(f);
+        const entries = Object.values(zip.files)
+          .filter(e => !e.dir && /\.(jpe?g|png|gif|webp|bmp)$/i.test(e.name))
+          .sort((a,b) => naturalSort(a.name,b.name));
+        for(const entry of entries){
+          const blob = await entry.async('blob');
+          addPage(entry.name, URL.createObjectURL(blob));
+        }
+        setStatus(entries.length + ' páginas de ' + f.name);
+      }catch(err){
+        console.error(err);
+        setStatus('Não consegui ler ' + f.name);
+      }
+    }
+
+    for(const f of pdfFiles){
+      if(!window.pdfjsLib){ setStatus('Leitor de PDF não carregou.'); continue; }
+      setStatus('Lendo ' + f.name + '…');
+      try{
+        const buf = await f.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+        for(let i=1; i<=pdf.numPages; i++){
+          setStatus('Renderizando ' + f.name + ' — página ' + i + '/' + pdf.numPages);
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({scale: 2});
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width; canvas.height = viewport.height;
+          await page.render({canvasContext: canvas.getContext('2d'), viewport}).promise;
+          addPage(f.name + ' p.' + i, canvas.toDataURL('image/png'));
+        }
+      }catch(err){
+        console.error(err);
+        setStatus('Não consegui ler ' + f.name);
+      }
+    }
+
+    for(const f of cbrFiles){
+      setStatus('Carregando suporte a CBR/RAR…');
+      try{
+        const Archive = await loadRarSupport();
+        setStatus('Lendo ' + f.name + '…');
+        const archive = await Archive.open(f);
+        const encrypted = await archive.hasEncryptedData().catch(() => null);
+        if(encrypted){ setStatus(f.name + ' está protegido por senha — não consigo abrir.'); continue; }
+        const extracted = await archive.extractFiles();
+        const flat = [];
+        (function flatten(obj, prefix){
+          for(const key in obj){
+            const val = obj[key];
+            if(val instanceof File) flat.push({path: prefix+key, file: val});
+            else if(val && typeof val === 'object') flatten(val, prefix+key+'/');
+          }
+        })(extracted, '');
+        const imgs = flat
+          .filter(e => /\.(jpe?g|png|gif|webp|bmp)$/i.test(e.path))
+          .sort((a,b) => naturalSort(a.path,b.path));
+        for(const e of imgs){ addPage(e.path, URL.createObjectURL(e.file)); }
+        setStatus(imgs.length + ' páginas de ' + f.name);
+      }catch(err){
+        console.error(err);
+        setStatus('Não consegui ler ' + f.name + ' — tente converter para .cbz.');
+      }
+    }
+
+    if(wasEmpty && pages.length){ currentPageIndex = 0; }
+    setStatus(pages.length + ' página(s) carregada(s)');
+    el('save-frames-btn').disabled = false;
+    el('load-frames-btn').disabled = false;
+    el('clear-btn').disabled = false;
+    toolbarEl.style.display = 'flex';
+    panelFramesEl.style.display = 'flex';
+    renderAll();
+  }
+
+  let rarSupportPromise = null;
+  function loadRarSupport(){
+    if(!rarSupportPromise){
+      rarSupportPromise = import('./libarchive/libarchive.js').then(mod => {
+        mod.Archive.init({ workerUrl: 'libarchive/worker-bundle.js' });
+        return mod.Archive;
+      });
+    }
+    return rarSupportPromise;
+  }
+
+  function addPage(name, url){
+    pages.push({ id: pageIdSeq++, name, url, frames: [] });
+  }
+
+  // ---------------- Clear all ----------------
+  el('clear-btn').onclick = () => {
+    if(!confirm('Limpar todos os quadrinhos e marcações carregados?')) return;
+    pages = []; currentPageIndex = -1; selectedFrameId = null; addFrameMode = false;
+    toolbarEl.style.display = 'none';
+    panelFramesEl.style.display = 'none';
+    el('save-frames-btn').disabled = true;
+    el('load-frames-btn').disabled = true;
+    el('clear-btn').disabled = true;
+    setStatus('');
+    renderAll();
+  };
+
+  // ---------------- Save / load frame data ----------------
+  el('save-frames-btn').onclick = () => {
+    const data = {
+      version: 1,
+      pages: pages.map(p => ({ name: p.name, frames: p.frames.map(f => ({x:f.x,y:f.y,w:f.w,h:f.h})) }))
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'marcacoes-de-quadros.json';
+    a.click();
+  };
+  el('load-frames-btn').onclick = () => el('frames-json-input').click();
+  el('frames-json-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      const text = await file.text();
+      const data = JSON.parse(text);
+      (data.pages||[]).forEach((saved, i) => {
+        if(pages[i]){
+          pages[i].frames = (saved.frames||[]).map(f => ({id: frameIdSeq++, x:f.x, y:f.y, w:f.w, h:f.h}));
+        }
+      });
+      setStatus('Marcações carregadas (por ordem das páginas — confira se bate com os arquivos atuais).');
+      renderAll();
+    }catch(err){
+      alert('Não consegui ler esse arquivo de marcações.');
+    }
+    e.target.value = '';
+  });
+
+  // ---------------- Render ----------------
+  function renderAll(){
+    renderThumbs();
+    renderStage();
+    renderFrameList();
+    renderToolbar();
+  }
+
+  function renderThumbs(){
+    thumbsEl.innerHTML = '';
+    pages.forEach((p, i) => {
+      const d = document.createElement('div');
+      d.className = 'thumb' + (i === currentPageIndex ? ' active' : '');
+      d.innerHTML = '<img src="'+p.url+'" loading="lazy">' +
+        '<span class="n">'+(i+1)+'</span>' +
+        '<span class="badge'+(p.frames.length?' has':'')+'">'+p.frames.length+'</span>';
+      d.onclick = () => { currentPageIndex = i; selectedFrameId = null; renderAll(); };
+      thumbsEl.appendChild(d);
+    });
+  }
+
+  function renderStage(){
+    if(currentPageIndex === -1){
+      stageEl.innerHTML = '';
+      const empty = el('empty-state') || buildEmptyState();
+      stageEl.appendChild(empty);
+      return;
+    }
+    const page = currentPage();
+    stageEl.innerHTML =
+      '<div class="mat"><div id="page-wrap">' +
+      '<img id="page-img" src="'+page.url+'" draggable="false">' +
+      '<div id="frame-layer" class="'+(addFrameMode?'add-mode':'')+'"></div>' +
+      '</div></div>';
+
+    const layer = el('frame-layer');
+    page.frames.forEach((f, idx) => {
+      const fEl = document.createElement('div');
+      fEl.className = 'frame' + (f.id === selectedFrameId ? ' selected' : '');
+      fEl.style.left = (f.x*100)+'%';
+      fEl.style.top = (f.y*100)+'%';
+      fEl.style.width = (f.w*100)+'%';
+      fEl.style.height = (f.h*100)+'%';
+      fEl.innerHTML =
+        '<div class="fill"></div>' +
+        '<span class="num">'+(idx+1)+'</span>' +
+        '<i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>';
+      if(f.id === selectedFrameId){
+        ['nw','n','ne','e','se','s','sw','w'].forEach(h => {
+          const hEl = document.createElement('div');
+          hEl.className = 'handle ' + h;
+          hEl.addEventListener('mousedown', (e) => startResize(e, f, h));
+          fEl.appendChild(hEl);
+        });
+      }
+      fEl.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('handle')) return;
+        e.stopPropagation();
+        selectedFrameId = f.id;
+        startMove(e, f);
+        renderAll();
+      });
+      layer.appendChild(fEl);
+    });
+
+    layer.addEventListener('mousedown', (e) => {
+      if(e.target !== layer) return;
+      selectedFrameId = null;
+      if(addFrameMode) startCreate(e, layer);
+      else renderAll();
+    });
+  }
+
+  function buildEmptyState(){
+    const d = document.createElement('div');
+    d.id = 'empty-state';
+    d.innerHTML =
+      '<div id="dropzone"><h2>Nenhum quadrinho carregado</h2>' +
+      '<p>Importe imagens soltas, um arquivo .cbz/.zip, .cbr/.rar ou um PDF do seu computador. Nada é enviado a nenhum servidor — tudo roda aqui no navegador.</p>' +
+      '<button class="topbtn primary" id="dropzone-btn">Escolher arquivos</button></div>';
+    d.querySelector('#dropzone-btn').onclick = () => el('file-input').click();
+    return d;
+  }
+
+  function renderFrameList(){
+    frameListEl.innerHTML = '';
+    const page = currentPage();
+    if(!page || !page.frames.length){
+      frameListEl.innerHTML = '<li class="empty" style="border:none;background:none;cursor:default;">Nenhum quadro marcado ainda. Ative "Marcar quadros" e desenhe sobre a página.</li>';
+      return;
+    }
+    page.frames.forEach((f, idx) => {
+      const li = document.createElement('li');
+      li.className = f.id === selectedFrameId ? 'selected' : '';
+      li.draggable = true;
+      li.dataset.idx = idx;
+      li.innerHTML = '<span class="idx">'+(idx+1)+'</span><span class="lbl">Quadro '+(idx+1)+'</span><button class="del">×</button>';
+      li.querySelector('.del').onclick = (e) => {
+        e.stopPropagation();
+        page.frames = page.frames.filter(fr => fr.id !== f.id);
+        if(selectedFrameId === f.id) selectedFrameId = null;
+        renderAll();
+      };
+      li.onclick = () => { selectedFrameId = f.id; renderAll(); };
+      li.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', idx); });
+      li.addEventListener('dragover', (e) => e.preventDefault());
+      li.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const to = idx;
+        if(from === to) return;
+        const [moved] = page.frames.splice(from, 1);
+        page.frames.splice(to, 0, moved);
+        renderAll();
+      });
+      frameListEl.appendChild(li);
+    });
+  }
+
+  function renderToolbar(){
+    pageCounterEl.textContent = pages.length ? (currentPageIndex+1)+' / '+pages.length : '0 / 0';
+    el('prev-page').disabled = currentPageIndex <= 0;
+    el('next-page').disabled = currentPageIndex >= pages.length-1;
+    addFrameBtn.classList.toggle('active', addFrameMode);
+    addFrameBtn.innerHTML = '<span class="sw"></span>' + (addFrameMode ? 'Marcando quadros…' : 'Marcar quadros');
+    readBtn.disabled = pages.length === 0;
+  }
+
+  el('prev-page').onclick = () => { if(currentPageIndex>0){ currentPageIndex--; selectedFrameId=null; renderAll(); } };
+  el('next-page').onclick = () => { if(currentPageIndex<pages.length-1){ currentPageIndex++; selectedFrameId=null; renderAll(); } };
+  addFrameBtn.onclick = () => { addFrameMode = !addFrameMode; selectedFrameId=null; renderAll(); };
+  readBtn.onclick = () => openReader(currentPageIndex);
+
+  // ---------------- Frame creation / move / resize ----------------
+  function fracFromEvent(e, layer){
+    const r = layer.getBoundingClientRect();
+    return { x: clamp((e.clientX-r.left)/r.width,0,1), y: clamp((e.clientY-r.top)/r.height,0,1) };
+  }
+
+  function startCreate(e, layer){
+    const start = fracFromEvent(e, layer);
+    const preview = document.createElement('div');
+    preview.className = 'frame-preview';
+    layer.appendChild(preview);
+
+    function onMove(ev){
+      const cur = fracFromEvent(ev, layer);
+      const x = Math.min(start.x, cur.x), y = Math.min(start.y, cur.y);
+      const w = Math.abs(cur.x-start.x), h = Math.abs(cur.y-start.y);
+      preview.style.left = (x*100)+'%'; preview.style.top = (y*100)+'%';
+      preview.style.width = (w*100)+'%'; preview.style.height = (h*100)+'%';
+      preview.dataset.x=x; preview.dataset.y=y; preview.dataset.w=w; preview.dataset.h=h;
+    }
+    function onUp(){
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      const x = parseFloat(preview.dataset.x||0), y = parseFloat(preview.dataset.y||0);
+      const w = parseFloat(preview.dataset.w||0), h = parseFloat(preview.dataset.h||0);
+      preview.remove();
+      if(w > 0.015 && h > 0.015){
+        const f = {id: frameIdSeq++, x, y, w, h};
+        currentPage().frames.push(f);
+        selectedFrameId = f.id;
+      }
+      renderAll();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  function startMove(e, f){
+    const layer = el('frame-layer');
+    const start = fracFromEvent(e, layer);
+    const orig = {x:f.x, y:f.y, w:f.w, h:f.h};
+    function onMove(ev){
+      const cur = fracFromEvent(ev, layer);
+      const dx = cur.x-start.x, dy = cur.y-start.y;
+      f.x = clamp(orig.x+dx, 0, 1-orig.w);
+      f.y = clamp(orig.y+dy, 0, 1-orig.h);
+      renderFrameGeometryOnly();
+    }
+    function onUp(){
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      renderAll();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  function startResize(e, f, handle){
+    e.stopPropagation();
+    const layer = el('frame-layer');
+    const start = fracFromEvent(e, layer);
+    const orig = {x:f.x, y:f.y, w:f.w, h:f.h};
+    function onMove(ev){
+      const cur = fracFromEvent(ev, layer);
+      const dx = cur.x-start.x, dy = cur.y-start.y;
+      let x=orig.x, y=orig.y, x2=orig.x+orig.w, y2=orig.y+orig.h;
+      if(handle.includes('n')) y = clamp(orig.y+dy, 0, y2-0.02);
+      if(handle.includes('s')) y2 = clamp(orig.y+orig.h+dy, y+0.02, 1);
+      if(handle.includes('w')) x = clamp(orig.x+dx, 0, x2-0.02);
+      if(handle.includes('e')) x2 = clamp(orig.x+orig.w+dx, x+0.02, 1);
+      f.x=x; f.y=y; f.w=x2-x; f.h=y2-y;
+      renderFrameGeometryOnly();
+    }
+    function onUp(){
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      renderAll();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  // cheap geometry-only update during drag (avoids full re-render jank)
+  function renderFrameGeometryOnly(){
+    const layer = el('frame-layer');
+    if(!layer) return;
+    const page = currentPage();
+    const nodes = layer.querySelectorAll('.frame');
+    nodes.forEach((node, i) => {
+      const f = page.frames[i];
+      if(!f) return;
+      node.style.left = (f.x*100)+'%';
+      node.style.top = (f.y*100)+'%';
+      node.style.width = (f.w*100)+'%';
+      node.style.height = (f.h*100)+'%';
+    });
+  }
+
+  // ---------------- Reader mode ----------------
+  const readerEl = el('reader');
+  const readerImg = el('reader-img');
+  const readerSpotlight = el('reader-spotlight');
+  const readerCaption = el('reader-caption');
+  const readerHint = el('reader-hint');
+
+  function openReader(pageIdx){
+    if(!pages.length) return;
+    readerOpen = true;
+    readerPageIndex = pageIdx;
+    readerFrameIndex = pages[pageIdx].frames.length ? 0 : -1;
+    readerEl.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    readerHint.style.opacity = '1';
+    setTimeout(() => { readerHint.style.opacity = '0'; }, 2600);
+    loadReaderImage(true);
+    window.addEventListener('resize', onReaderResize);
+  }
+  function closeReader(){
+    readerOpen = false;
+    readerEl.classList.remove('open');
+    document.body.style.overflow = '';
+    window.removeEventListener('resize', onReaderResize);
+  }
+  function onReaderResize(){ applyReaderTransform(true); }
+
+  function loadReaderImage(instant){
+    const page = pages[readerPageIndex];
+    readerImg.onload = () => applyReaderTransform(instant);
+    readerImg.src = page.url;
+    if(readerImg.complete) applyReaderTransform(instant);
+  }
+
+  function applyReaderTransform(instant){
+    const page = pages[readerPageIndex];
+    const iw = readerImg.naturalWidth || 1, ih = readerImg.naturalHeight || 1;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const containScale = Math.min(vw/iw, vh/ih);
+    const baseW = iw*containScale, baseH = ih*containScale;
+    readerImg.style.width = baseW+'px';
+    readerImg.style.height = baseH+'px';
+    const offsetX = (vw-baseW)/2, offsetY = (vh-baseH)/2;
+    readerImg.style.left = offsetX+'px';
+    readerImg.style.top = offsetY+'px';
+
+    let fx=0, fy=0, fw=1, fh=1, pad=0.98;
+    const frames = page.frames;
+    if(readerFrameIndex >= 0 && frames[readerFrameIndex]){
+      const f = frames[readerFrameIndex];
+      fx=f.x; fy=f.y; fw=f.w; fh=f.h; pad=0.90;
+    }
+    const targetPxW = fw*baseW, targetPxH = fh*baseH;
+    const scale = Math.min(vw/targetPxW, vh/targetPxH) * pad;
+    const centerLocalX = (fx+fw/2)*baseW, centerLocalY = (fy+fh/2)*baseH;
+    const tx = vw/2 - offsetX - scale*centerLocalX;
+    const ty = vh/2 - offsetY - scale*centerLocalY;
+
+    readerImg.style.transition = instant ? 'none' : 'transform 0.45s cubic-bezier(.22,.61,.36,1)';
+    if(instant){
+      readerImg.getBoundingClientRect();
+      requestAnimationFrame(() => { readerImg.style.transition = 'transform 0.45s cubic-bezier(.22,.61,.36,1)'; });
+    }
+    readerImg.style.transform = 'translate('+tx+'px,'+ty+'px) scale('+scale+')';
+
+    // Spotlight: darken everything outside the marked frame, leave the frame itself clear.
+    // No spotlight when there's no marked frame (whole page is "in focus").
+    const hasFrame = readerFrameIndex >= 0 && !!frames[readerFrameIndex];
+    const spotTransition = 'left .45s cubic-bezier(.22,.61,.36,1), top .45s cubic-bezier(.22,.61,.36,1), width .45s cubic-bezier(.22,.61,.36,1), height .45s cubic-bezier(.22,.61,.36,1), opacity .3s';
+    readerSpotlight.style.transition = instant ? 'none' : spotTransition;
+    if(hasFrame){
+      readerSpotlight.style.left = (offsetX + tx + fx*baseW*scale) + 'px';
+      readerSpotlight.style.top = (offsetY + ty + fy*baseH*scale) + 'px';
+      readerSpotlight.style.width = (fw*baseW*scale) + 'px';
+      readerSpotlight.style.height = (fh*baseH*scale) + 'px';
+      readerSpotlight.style.opacity = '1';
+    } else {
+      readerSpotlight.style.opacity = '0';
+    }
+    if(instant){
+      readerSpotlight.getBoundingClientRect();
+      requestAnimationFrame(() => { readerSpotlight.style.transition = spotTransition; });
+    }
+
+    updateCaption();
+  }
+
+  function updateCaption(){
+    const page = pages[readerPageIndex];
+    let txt = 'Página '+(readerPageIndex+1)+' de '+pages.length;
+    if(page.frames.length) txt += '  ·  Quadro '+(readerFrameIndex+1)+' de '+page.frames.length;
+    readerCaption.textContent = txt;
+  }
+
+  function readerNext(){
+    const frames = pages[readerPageIndex].frames;
+    if(readerFrameIndex < frames.length-1){
+      readerFrameIndex++;
+      applyReaderTransform(false);
+    } else if(readerPageIndex < pages.length-1){
+      readerPageIndex++;
+      readerFrameIndex = pages[readerPageIndex].frames.length ? 0 : -1;
+      loadReaderImage(false);
+    }
+  }
+  function readerPrev(){
+    if(readerFrameIndex > 0){
+      readerFrameIndex--;
+      applyReaderTransform(false);
+    } else if(readerPageIndex > 0){
+      readerPageIndex--;
+      const f = pages[readerPageIndex].frames;
+      readerFrameIndex = f.length ? f.length-1 : -1;
+      loadReaderImage(false);
+    }
+  }
+
+  el('reader-left').onclick = readerPrev;
+  el('reader-right').onclick = readerNext;
+  el('reader-close').onclick = closeReader;
+
+  // ---------------- Keyboard ----------------
+  document.addEventListener('keydown', (e) => {
+    if(readerOpen){
+      if(e.key === 'ArrowRight'){ readerNext(); }
+      else if(e.key === 'ArrowLeft'){ readerPrev(); }
+      else if(e.key === 'Escape'){ closeReader(); }
+      return;
+    }
+    if(e.key === 'f' || e.key === 'F'){ addFrameMode = !addFrameMode; renderAll(); }
+    else if((e.key === 'Delete' || e.key === 'Backspace') && selectedFrameId !== null){
+      const page = currentPage();
+      if(page){ page.frames = page.frames.filter(f => f.id !== selectedFrameId); selectedFrameId = null; renderAll(); }
+    }
+    else if(e.key === 'ArrowRight'){ el('next-page').click(); }
+    else if(e.key === 'ArrowLeft'){ el('prev-page').click(); }
+    else if(e.key === 'Enter' && pages.length){ openReader(currentPageIndex); }
+    else if(e.key === 'Escape'){ selectedFrameId = null; renderAll(); }
+  });
+
+  // ---------------- Help popover ----------------
+  const helpPop = el('help-pop');
+  el('help-btn').onclick = () => helpPop.classList.toggle('open');
+  document.addEventListener('click', (e) => {
+    if(!helpPop.contains(e.target) && e.target.id !== 'help-btn') helpPop.classList.remove('open');
+  });
+
+  renderAll();
+})();
+
+</script>
+</body>
+</html>
