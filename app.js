@@ -26,6 +26,10 @@
   const pageCounterEl = el('page-counter');
   const addFrameBtn = el('add-frame-btn');
   const readBtn = el('read-btn');
+  const autoDetectBtn = el('auto-detect-btn');
+  const autoDetectScopeEl = el('auto-detect-scope');
+  const autoDetectRtlEl = el('auto-detect-rtl');
+  let autoDetectRunning = false;
 
   function setStatus(msg){ statusEl.textContent = msg || ''; }
   function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
@@ -285,7 +289,7 @@
     d.id = 'empty-state';
     d.innerHTML =
       '<div id="dropzone"><h2>Nenhum quadrinho carregado</h2>' +
-      '<p>Importe imagens soltas, um arquivo .cbz/.zip, .cbr/.rar ou um PDF do seu computador. Nada é enviado a nenhum servidor — tudo roda aqui no navegador.</p>' +
+      '<p>Importe imagens soltas, um arquivo .cbz/.zip, .cbr/.rar ou um PDF do seu computador. Nada sai da sua máquina — a leitura e marcação rodam no navegador; a detecção automática de quadros (opcional) usa um servidor local do Kumiko, se você optar por ligá-lo.</p>' +
       '<button class="topbtn primary" id="dropzone-btn">Escolher arquivos</button></div>';
     d.querySelector('#dropzone-btn').onclick = () => el('file-input').click();
     return d;
@@ -333,6 +337,10 @@
     addFrameBtn.classList.toggle('active', addFrameMode);
     addFrameBtn.innerHTML = '<span class="sw"></span>' + (addFrameMode ? 'Marcando quadros…' : 'Marcar quadros');
     readBtn.disabled = pages.length === 0;
+    autoDetectBtn.disabled = pages.length === 0 || autoDetectRunning;
+    autoDetectScopeEl.disabled = autoDetectRunning;
+    autoDetectRtlEl.disabled = autoDetectRunning;
+    autoDetectBtn.textContent = autoDetectRunning ? 'Detectando…' : '✨ Auto-detectar';
   }
 
   el('prev-page').onclick = () => { if(currentPageIndex>0){ currentPageIndex--; selectedFrameId=null; renderAll(); } };
@@ -558,6 +566,97 @@
   el('reader-left').onclick = readerPrev;
   el('reader-right').onclick = readerNext;
   el('reader-close').onclick = closeReader;
+
+  // ---------------- Auto-detecção de quadros (Kumiko de verdade, via servidor local) ----------------
+  const KUMIKO_SERVER_URL = 'http://127.0.0.1:8990';
+
+  function loadPageBlob(url){
+    return fetch(url).then(r => {
+      if(!r.ok) throw new Error('Falha ao ler a imagem da página.');
+      return r.blob();
+    });
+  }
+
+  async function pingKumikoServer(){
+    try{
+      const r = await fetch(KUMIKO_SERVER_URL + '/ping', { method: 'GET' });
+      return r.ok;
+    }catch(e){
+      return false;
+    }
+  }
+
+  async function detectFramesViaServer(blob, opts){
+    opts = opts || {};
+    const params = new URLSearchParams({
+      rtl: opts.rtl ? '1' : '0',
+      min_panel_size_ratio: String(opts.minPanelSizeRatio != null ? opts.minPanelSizeRatio : 0.1),
+    });
+    const res = await fetch(KUMIKO_SERVER_URL + '/detect?' + params.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': blob.type || 'image/png' },
+      body: blob,
+    });
+    if(!res.ok){
+      let msg = 'O servidor do Kumiko respondeu com erro (' + res.status + ').';
+      try{ const data = await res.json(); if(data.error) msg = data.error; }catch(e){}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    return data.frames || [];
+  }
+
+  autoDetectBtn.onclick = async () => {
+    if(autoDetectRunning || !pages.length || currentPageIndex === -1) return;
+
+    const scope = autoDetectScopeEl.value; // 'current' | 'all'
+    const rtl = autoDetectRtlEl.checked;
+    const targets = scope === 'all' ? pages.map((_, i) => i) : [currentPageIndex];
+
+    const hasExisting = targets.some(i => pages[i].frames.length > 0);
+    if(hasExisting){
+      const msg = scope === 'all'
+        ? 'Isso substitui as marcações já existentes nas páginas que já têm quadros marcados. Continuar?'
+        : 'Isso substitui as marcações já existentes nesta página. Continuar?';
+      if(!confirm(msg)) return;
+    }
+
+    autoDetectRunning = true;
+    renderToolbar();
+
+    try{
+      setStatus('Verificando o servidor local do Kumiko…');
+      const alive = await pingKumikoServer();
+      if(!alive){
+        throw new Error(
+          'Não consegui falar com o servidor do Kumiko em ' + KUMIKO_SERVER_URL + '. ' +
+          'Rode "python3 kumiko-tools/kumiko_server.py" num terminal e deixe-o aberto, depois tente de novo.'
+        );
+      }
+
+      for(let i = 0; i < targets.length; i++){
+        const pageIndex = targets[i];
+        const page = pages[pageIndex];
+        setStatus('Detectando quadros — página ' + (i+1) + '/' + targets.length + '…');
+
+        const blob = await loadPageBlob(page.url);
+        const detected = await detectFramesViaServer(blob, { rtl });
+        page.frames = detected.map(f => ({ id: frameIdSeq++, x: f.x, y: f.y, w: f.w, h: f.h }));
+      }
+
+      setStatus(targets.length > 1
+        ? 'Quadros detectados em ' + targets.length + ' página(s). Confira e ajuste o que precisar.'
+        : 'Quadros detectados nesta página. Confira e ajuste o que precisar.');
+    }catch(err){
+      console.error(err);
+      setStatus('Não consegui detectar os quadros automaticamente.');
+      alert('Não consegui rodar a detecção automática de quadros: ' + (err.message || err));
+    }finally{
+      autoDetectRunning = false;
+      selectedFrameId = null;
+      renderAll();
+    }
+  };
 
   // ---------------- Keyboard ----------------
   document.addEventListener('keydown', (e) => {
