@@ -581,7 +581,10 @@
   el('reader-close').onclick = closeReader;
 
   // ---------------- Auto-detecção de quadros (Kumiko de verdade, via servidor local) ----------------
-  const KUMIKO_SERVER_URL = 'http://127.0.0.1:8990';
+  // Agora o mesmo servidor (kumiko_server.py) serve o app E o Kumiko, então
+  // a chamada é sempre pra própria origem da página — não precisa mais
+  // apontar pra uma porta/host fixo.
+  const KUMIKO_SERVER_URL = '';
 
   function loadPageBlob(url){
     return fetch(url).then(r => {
@@ -642,8 +645,9 @@
       const alive = await pingKumikoServer();
       if(!alive){
         throw new Error(
-          'Não consegui falar com o servidor do Kumiko em ' + KUMIKO_SERVER_URL + '. ' +
-          'Rode "python3 kumiko-tools/kumiko_server.py" num terminal e deixe-o aberto, depois tente de novo.'
+          'Não consegui falar com o servidor do Kumiko. ' +
+          'Rode "python3 kumiko-tools/kumiko_server.py" num terminal e abra o Leitor de HQs ' +
+          'pelo endereço que aparece lá (normalmente http://127.0.0.1:8990/), depois tente de novo.'
         );
       }
 

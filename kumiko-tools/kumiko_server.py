@@ -2,26 +2,32 @@
 """
 kumiko_server.py
 
-Servidor HTTP local que expõe o Kumiko (o de verdade, Python) pro Leitor de
-HQs chamar via fetch() do navegador, com um clique no botão "Auto-detectar".
+Servidor HTTP local único que serve o Leitor de HQs (index.html, app.js,
+etc.) E expõe o Kumiko (o de verdade, Python) pro app chamar via fetch(),
+com um clique no botão "Auto-detectar". Só precisa rodar isso e abrir UM
+endereço no navegador — não precisa mais abrir o index.html separado.
 
-Por que um servidor à parte, e não integrado direto no app?
+Por que um servidor, e não integrar o Kumiko direto no app?
 O Kumiko é Python; navegadores não deixam uma página web rodar um programa
 local diretamente (bloqueio de segurança). Este servidor faz a ponte: fica
-escutando em 127.0.0.1, e só responde pedidos vindos da própria página do
-Leitor de HQs enquanto esta janela/processo ficar aberto.
+escutando em 127.0.0.1, serve os arquivos do app normalmente por HTTP, e
+responde às chamadas de detecção enquanto esta janela/processo ficar
+aberto.
 
 Uso:
     python3 kumiko_server.py
     (ou python3 kumiko_server.py --port 8990 --kumiko-dir ./kumiko)
 
-Depois, deixe esse terminal aberto e use o Leitor de HQs normalmente — o
-botão "Auto-detectar" vai chamar http://127.0.0.1:8990/detect sozinho.
+Depois, abra o endereço que aparece no terminal (por padrão
+http://127.0.0.1:8990/) — é ali que o Leitor de HQs aparece, já com o
+botão "Auto-detectar" funcionando. Deixe o terminal aberto enquanto usa o
+app; Ctrl+C pra parar quando terminar.
 
 Dependências: opencv-python, numpy (as mesmas do Kumiko).
 """
 
 import argparse
+import functools
 import http.server
 import json
 import os
@@ -31,6 +37,7 @@ import tempfile
 from urllib.parse import urlparse, parse_qs
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_ROOT_DEFAULT = os.path.dirname(SCRIPT_DIR)  # a pasta do index.html, um nível acima de kumiko-tools/
 KUMIKO_DIR_DEFAULT = os.path.join(SCRIPT_DIR, "kumiko")
 
 CONTENT_TYPE_TO_EXT = {
@@ -43,8 +50,14 @@ CONTENT_TYPE_TO_EXT = {
 }
 
 
-def make_handler(Kumiko):
-    class Handler(http.server.BaseHTTPRequestHandler):
+def make_handler(Kumiko, app_root):
+    # Herda de SimpleHTTPRequestHandler pra ganhar de graça a parte de servir
+    # arquivos estáticos (index.html, app.js, style.css, libarchive/, etc.)
+    # e só adiciona por cima as rotas /ping e /detect do Kumiko.
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=app_root, **kwargs)
+
         def _cors_headers(self):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -59,9 +72,13 @@ def make_handler(Kumiko):
             if self.path == "/ping":
                 self._respond_json(200, {"ok": True, "service": "kumiko-server"})
                 return
-            self.send_response(404)
+            # qualquer outra rota GET é um arquivo estático do app (index.html,
+            # app.js, style.css, libarchive/*, etc.) -- deixa o handler padrão cuidar
+            super().do_GET()
+
+        def end_headers(self):
             self._cors_headers()
-            self.end_headers()
+            super().end_headers()
 
         def do_POST(self):
             if not self.path.startswith("/detect"):
@@ -111,7 +128,6 @@ def make_handler(Kumiko):
         def _respond_json(self, status, payload):
             body = json.dumps(payload).encode("utf-8")
             self.send_response(status)
-            self._cors_headers()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -127,11 +143,20 @@ def make_handler(Kumiko):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Servidor local do Kumiko para o Leitor de HQs.")
+    parser = argparse.ArgumentParser(
+        description="Servidor local único: serve o Leitor de HQs e expõe o Kumiko.")
     parser.add_argument("--port", type=int, default=8990)
+    parser.add_argument("--app-root", default=APP_ROOT_DEFAULT,
+                         help=f"Pasta com o index.html do Leitor de HQs. Padrão: {APP_ROOT_DEFAULT}")
     parser.add_argument("--kumiko-dir", default=KUMIKO_DIR_DEFAULT,
                          help=f"Pasta com o código-fonte do Kumiko (kumikolib.py). Padrão: {KUMIKO_DIR_DEFAULT}")
     args = parser.parse_args()
+
+    index_path = os.path.join(args.app_root, "index.html")
+    if not os.path.isfile(index_path):
+        print(f"[erro] Não encontrei index.html em '{args.app_root}'.", file=sys.stderr)
+        print("       Use --app-root pra apontar pra pasta certa.", file=sys.stderr)
+        sys.exit(1)
 
     kumikolib_path = os.path.join(args.kumiko_dir, "kumikolib.py")
     if not os.path.isfile(kumikolib_path):
@@ -147,10 +172,12 @@ def main():
         print("       Rode: pip install opencv-python numpy requests", file=sys.stderr)
         sys.exit(1)
 
-    handler = make_handler(Kumiko)
+    handler = make_handler(Kumiko, args.app_root)
     with socketserver.ThreadingTCPServer(("127.0.0.1", args.port), handler) as httpd:
-        print(f"Servidor do Kumiko rodando em http://127.0.0.1:{args.port}")
-        print("Deixe esta janela aberta enquanto usa o Leitor de HQs. Ctrl+C pra parar.")
+        url = f"http://127.0.0.1:{args.port}/"
+        print(f"Leitor de HQs (com auto-detecção via Kumiko) rodando em {url}")
+        print("Abra esse endereço no navegador. Deixe esta janela aberta enquanto usa o app.")
+        print("Ctrl+C pra parar.")
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

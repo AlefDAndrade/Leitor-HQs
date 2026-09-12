@@ -23,20 +23,21 @@ Tem dois jeitos de usar o Kumiko com o Leitor de HQs:
 
 ## Opção 1 — Botão "✨ Auto-detectar" dentro do app (recomendado)
 
-O app faz uma chamada de rede local (`fetch`) pra um servidor Python que
-roda na sua própria máquina, embrulhando o Kumiko. Isso dá o fluxo mais
-direto: importa as páginas no app do jeito normal, clica no botão, e as
-marcações aparecem sozinhas.
+Um único servidor local serve o próprio app (`index.html`) **e** embrulha
+o Kumiko — não precisa mais abrir o `index.html` separado nem rodar dois
+processos.
 
-1. Num terminal, deixe o servidor rodando:
+1. Num terminal, rode:
    ```bash
    cd kumiko-tools
    python3 kumiko_server.py
    ```
-   Ele fica escutando em `http://127.0.0.1:8990`. Deixe esse terminal
-   aberto enquanto usa o Leitor de HQs (`Ctrl+C` pra parar quando terminar).
+   Ele imprime um endereço, normalmente `http://127.0.0.1:8990/`. Deixe
+   esse terminal aberto enquanto usa o Leitor de HQs (`Ctrl+C` pra parar
+   quando terminar).
 
-2. Abra o `index.html` normalmente e importe suas páginas.
+2. Abra esse endereço no navegador (em vez de dar duplo-clique no
+   `index.html`) e importe suas páginas normalmente.
 
 3. Clique em **"✨ Auto-detectar"** na barra de ferramentas. Dá pra escolher
    entre "nesta página" ou "todas as páginas", e marcar "mangá" pra ordem
@@ -46,16 +47,16 @@ marcações aparecem sozinhas.
    redimensionar, apagar, reordenar) o que precisar, do jeito que já
    funcionava antes.
 
-Se o app não conseguir falar com o servidor, ele avisa com uma mensagem
-clara pra você rodar o `kumiko_server.py` — nenhuma imagem é perdida, é só
-tentar de novo depois de ligar o servidor.
+Se por algum motivo você abrir o `index.html` direto (sem passar pelo
+servidor), o app ainda funciona pra leitura e marcação manual — só o botão
+"Auto-detectar" não vai achar o servidor, e avisa com uma mensagem clara.
 
-**Sobre privacidade:** com essa opção, a imagem da página sai do
-navegador e vai até o `kumiko_server.py` — mas só até `127.0.0.1` (sua
-própria máquina), nunca pra internet. É equivalente a rodar qualquer
-programa local no seu computador.
+**Sobre privacidade:** a imagem da página sai do navegador e vai até o
+`kumiko_server.py` — mas só até `127.0.0.1` (sua própria máquina), nunca
+pra internet. É equivalente a rodar qualquer programa local no seu
+computador.
 
-## Opção 2 — Script de linha de comando (sem precisar abrir o app com um servidor no ar)
+## Opção 2 — Script de linha de comando (sem precisar deixar um servidor no ar)
 
 Útil se você quer gerar as marcações de um lote de páginas de uma vez,
 sem depender do app estar aberto.
