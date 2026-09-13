@@ -262,12 +262,13 @@
         ['nw','n','ne','e','se','s','sw','w'].forEach(h => {
           const hEl = document.createElement('div');
           hEl.className = 'handle ' + h;
-          hEl.addEventListener('mousedown', (e) => startResize(e, f, h));
+          hEl.addEventListener('pointerdown', (e) => startResize(e, f, h));
           fEl.appendChild(hEl);
         });
       }
-      fEl.addEventListener('mousedown', (e) => {
+      fEl.addEventListener('pointerdown', (e) => {
         if(e.target.classList.contains('handle')) return;
+        e.preventDefault();
         e.stopPropagation();
         selectedFrameId = f.id;
         startMove(e, f);
@@ -276,10 +277,10 @@
       layer.appendChild(fEl);
     });
 
-    layer.addEventListener('mousedown', (e) => {
+    layer.addEventListener('pointerdown', (e) => {
       if(e.target !== layer) return;
       selectedFrameId = null;
-      if(addFrameMode) startCreate(e, layer);
+      if(addFrameMode){ e.preventDefault(); startCreate(e, layer); }
       else renderAll();
     });
   }
@@ -305,16 +306,34 @@
     page.frames.forEach((f, idx) => {
       const li = document.createElement('li');
       li.className = f.id === selectedFrameId ? 'selected' : '';
-      li.draggable = true;
       li.dataset.idx = idx;
-      li.innerHTML = '<span class="idx">'+(idx+1)+'</span><span class="lbl">Quadro '+(idx+1)+'</span><button class="del">×</button>';
+      li.innerHTML = '<span class="idx">'+(idx+1)+'</span><span class="lbl">Quadro '+(idx+1)+'</span>' +
+        '<button class="move-btn up" title="Mover para cima" '+(idx===0?'disabled':'')+'>▲</button>' +
+        '<button class="move-btn down" title="Mover para baixo" '+(idx===page.frames.length-1?'disabled':'')+'>▼</button>' +
+        '<button class="del" title="Apagar quadro">×</button>';
       li.querySelector('.del').onclick = (e) => {
         e.stopPropagation();
         page.frames = page.frames.filter(fr => fr.id !== f.id);
         if(selectedFrameId === f.id) selectedFrameId = null;
         renderAll();
       };
+      li.querySelector('.up').onclick = (e) => {
+        e.stopPropagation();
+        if(idx === 0) return;
+        [page.frames[idx-1], page.frames[idx]] = [page.frames[idx], page.frames[idx-1]];
+        renderAll();
+      };
+      li.querySelector('.down').onclick = (e) => {
+        e.stopPropagation();
+        if(idx === page.frames.length-1) return;
+        [page.frames[idx+1], page.frames[idx]] = [page.frames[idx], page.frames[idx+1]];
+        renderAll();
+      };
       li.onclick = () => { selectedFrameId = f.id; renderAll(); };
+      // arrastar com o mouse continua funcionando (desktop); em telas de toque,
+      // os botões ▲▼ acima cobrem a reordenação, já que drag-and-drop nativo
+      // do HTML5 não funciona em touch.
+      li.draggable = true;
       li.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', idx); });
       li.addEventListener('dragover', (e) => e.preventDefault());
       li.addEventListener('drop', (e) => {
@@ -369,8 +388,8 @@
       preview.dataset.x=x; preview.dataset.y=y; preview.dataset.w=w; preview.dataset.h=h;
     }
     function onUp(){
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
       const x = parseFloat(preview.dataset.x||0), y = parseFloat(preview.dataset.y||0);
       const w = parseFloat(preview.dataset.w||0), h = parseFloat(preview.dataset.h||0);
       preview.remove();
@@ -381,8 +400,8 @@
       }
       renderAll();
     }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
   }
 
   function startMove(e, f){
@@ -397,16 +416,17 @@
       renderFrameGeometryOnly();
     }
     function onUp(){
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
       renderAll();
     }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
   }
 
   function startResize(e, f, handle){
     e.stopPropagation();
+    e.preventDefault();
     const layer = el('frame-layer');
     const start = fracFromEvent(e, layer);
     const orig = {x:f.x, y:f.y, w:f.w, h:f.h};
@@ -422,12 +442,12 @@
       renderFrameGeometryOnly();
     }
     function onUp(){
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
       renderAll();
     }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
   }
 
   // cheap geometry-only update during drag (avoids full re-render jank)
@@ -700,6 +720,17 @@
   document.addEventListener('click', (e) => {
     if(!helpPop.contains(e.target) && e.target.id !== 'help-btn') helpPop.classList.remove('open');
   });
+
+  // ---------------- Recolher "Ordem de leitura" (útil em telas pequenas) ----------------
+  const panelFramesToggle = el('panel-frames-toggle');
+  if(panelFramesToggle){
+    panelFramesToggle.onclick = () => panelFramesEl.classList.toggle('collapsed');
+    // em celulares, começa recolhido pra sobrar mais espaço pra página;
+    // em telas maiores, começa aberto como sempre foi.
+    if(window.matchMedia('(max-width: 620px)').matches){
+      panelFramesEl.classList.add('collapsed');
+    }
+  }
 
   renderAll();
 })();
