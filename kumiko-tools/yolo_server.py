@@ -149,6 +149,106 @@ def sort_reading_order(boxes, rtl=False):
     return sorted(boxes, key=lambda b: (round(b["y"], 1), -b["x"] if rtl else b["x"]))
 
 
+def detect_missing_regions(boxes, width, height, min_area_ratio=0.01, erosion_ratio=0.035, debug=False):
+    """Acha áreas da página que sobraram sem nenhum quadro detectado por
+    cima -- candidatas a quadros que o modelo "não viu". Funciona numa
+    grade de análise (não pixel a pixel, por velocidade): marca o que já
+    está coberto, aplica uma erosão morfológica pra quebrar as frestas
+    finas normais entre painéis (senão a "área vazia" vira a página
+    inteira, já que as frestas conectam tudo, incluindo a margem externa
+    da página), e trata cada blob que sobrar como um possível quadro
+    perdido."""
+    GRID_W = 160
+    GRID_H = max(1, round(GRID_W * height / width))
+
+    def to_grid(x, y):
+        return int(x / width * GRID_W), int(y / height * GRID_H)
+
+    covered = [[False] * GRID_W for _ in range(GRID_H)]
+    for b in boxes:
+        gx1, gy1 = to_grid(b["x"], b["y"])
+        gx2, gy2 = to_grid(b["x"] + b["w"], b["y"] + b["h"])
+        for gy in range(max(0, gy1), min(GRID_H, gy2 + 1)):
+            for gx in range(max(0, gx1), min(GRID_W, gx2 + 1)):
+                covered[gy][gx] = True
+
+    uncovered = [[not c for c in row] for row in covered]
+
+    # raio em pixels físicos (proporcional à menor dimensão da página),
+    # convertido pra células da grade -- assim o resultado não depende da
+    # resolução escolhida pra grade de análise, só do tamanho real da página
+    cell_size_px = width / GRID_W
+    erosion_px = erosion_ratio * min(width, height)
+    radius = max(1, round(erosion_px / cell_size_px))
+
+    def erode(mask, r):
+        h, w = len(mask), len(mask[0])
+        out = [[False] * w for _ in range(h)]
+        for y in range(h):
+            for x in range(w):
+                if not mask[y][x]:
+                    continue
+                ok = True
+                for dy in range(-r, r + 1):
+                    if not ok:
+                        break
+                    for dx in range(-r, r + 1):
+                        ny, nx = y + dy, x + dx
+                        if ny < 0 or ny >= h or nx < 0 or nx >= w or not mask[ny][nx]:
+                            ok = False
+                            break
+                out[y][x] = ok
+        return out
+
+    eroded = erode(uncovered, radius)
+
+    visited = [[False] * GRID_W for _ in range(GRID_H)]
+    regions = []
+    for sy in range(GRID_H):
+        for sx in range(GRID_W):
+            if not eroded[sy][sx] or visited[sy][sx]:
+                continue
+            stack = [(sx, sy)]
+            visited[sy][sx] = True
+            cells = []
+            while stack:
+                cx, cy = stack.pop()
+                cells.append((cx, cy))
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nx, ny = cx + dx, cy + dy
+                    if 0 <= nx < GRID_W and 0 <= ny < GRID_H and eroded[ny][nx] and not visited[ny][nx]:
+                        visited[ny][nx] = True
+                        stack.append((nx, ny))
+            regions.append(cells)
+
+    page_area_cells = GRID_W * GRID_H
+    found = []
+    for cells in regions:
+        area_ratio = len(cells) / page_area_cells
+        if debug:
+            print(f"[yolo-server]   (candidato bruto: área={area_ratio:.2%}, "
+                  f"{'aceito' if area_ratio >= min_area_ratio else 'descartado -- menor que min_area_ratio'})",
+                  file=sys.stderr)
+        if area_ratio < min_area_ratio:
+            continue
+        xs = [c[0] for c in cells]
+        ys = [c[1] for c in cells]
+        gx1, gx2 = min(xs), max(xs)
+        gy1, gy2 = min(ys), max(ys)
+        # expande de volta pelo raio da erosão, aproximando o tamanho real do buraco
+        fx1 = max(0, gx1 - radius) / GRID_W
+        fy1 = max(0, gy1 - radius) / GRID_H
+        fx2 = min(GRID_W, gx2 + 1 + radius) / GRID_W
+        fy2 = min(GRID_H, gy2 + 1 + radius) / GRID_H
+        found.append({
+            "x": fx1 * width, "y": fy1 * height,
+            "w": (fx2 - fx1) * width, "h": (fy2 - fy1) * height,
+            "confidence": None,  # não veio do modelo, é inferido pela lacuna
+            "inferred": True,
+        })
+    return found
+
+
 def make_handler(model, Image, app_root):
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -195,6 +295,10 @@ def make_handler(model, Image, app_root):
                 min_panel_size_ratio = float(query.get("min_panel_size_ratio", ["0.05"])[0])
             except ValueError:
                 min_panel_size_ratio = 0.05
+            try:
+                min_gap_area_ratio = float(query.get("min_gap_area_ratio", ["0.01"])[0])
+            except ValueError:
+                min_gap_area_ratio = 0.01
 
             length = int(self.headers.get("Content-Length", 0) or 0)
             if length <= 0:
@@ -225,9 +329,21 @@ def make_handler(model, Image, app_root):
                 min_area = min_side_px * min_side_px
                 boxes = [b for b in boxes if box_area(b) >= min_area]
 
+                if query.get("fill_gaps", ["1"])[0] not in ("0", "false"):
+                    gaps = detect_missing_regions(boxes, width, height, min_area_ratio=min_gap_area_ratio, debug=True)
+                    print(f"[yolo-server] fill_gaps: {len(gaps)} região(ões) recuperada(s)", file=sys.stderr)
+                    for g in gaps:
+                        print(f"[yolo-server]   -> x={g['x']/width:.3f} y={g['y']/height:.3f} "
+                              f"w={g['w']/width:.3f} h={g['h']/height:.3f}", file=sys.stderr)
+                    boxes = boxes + gaps
+
                 ordered = sort_reading_order(boxes, rtl=rtl)
                 frames = [
-                    {"x": b["x"] / width, "y": b["y"] / height, "w": b["w"] / width, "h": b["h"] / height}
+                    {
+                        "x": b["x"] / width, "y": b["y"] / height,
+                        "w": b["w"] / width, "h": b["h"] / height,
+                        "inferred": b.get("inferred", False),
+                    }
                     for b in ordered
                 ]
 
