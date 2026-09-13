@@ -235,6 +235,10 @@
   #reader-spotlight{
     position:absolute; pointer-events:none; z-index:3; opacity:0;
     box-shadow: 0 0 0 9999px rgba(6,7,11,.62);
+    transition: box-shadow .15s;
+  }
+  #reader.blackout #reader-spotlight{
+    box-shadow: 0 0 0 9999px #000;
   }
   .reader-zone{ position:absolute; top:0; bottom:0; }
   .reader-zone.left{ left:0; width:38%; cursor:w-resize; }
@@ -252,6 +256,13 @@
     font-size:16px; display:flex; align-items:center; justify-content:center; z-index:5;
   }
   #reader-close:hover{ background:rgba(255,255,255,.14); }
+  #reader-blackout-btn{
+    position:absolute; top:16px; right:60px; width:34px; height:34px; border-radius:50%;
+    background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.16); color:#e9e6da;
+    font-size:13px; display:flex; align-items:center; justify-content:center; z-index:5;
+  }
+  #reader-blackout-btn:hover{ background:rgba(255,255,255,.14); }
+  #reader-blackout-btn.active{ background:var(--accent); border-color:var(--accent); color:#1a0805; }
   #reader-caption{
     position:absolute; bottom:18px; left:50%; transform:translateX(-50%); font-family:var(--mono);
     font-size:12px; color:rgba(255,255,255,.55); background:rgba(0,0,0,.35); padding:6px 12px;

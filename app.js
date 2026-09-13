@@ -600,6 +600,16 @@
   el('reader-right').onclick = readerNext;
   el('reader-close').onclick = closeReader;
 
+  // ---------------- Blackout (leitura) ----------------
+  const readerBlackoutBtn = el('reader-blackout-btn');
+  let blackoutMode = false;
+  function setBlackout(on){
+    blackoutMode = on;
+    readerEl.classList.toggle('blackout', blackoutMode);
+    readerBlackoutBtn.classList.toggle('active', blackoutMode);
+  }
+  readerBlackoutBtn.onclick = () => setBlackout(!blackoutMode);
+
   // ---------------- Auto-detecção de quadros (Kumiko de verdade, via servidor local) ----------------
   // Agora o mesmo servidor (kumiko_server.py) serve o app E o Kumiko, então
   // a chamada é sempre pra própria origem da página — não precisa mais
@@ -701,6 +711,7 @@
       if(e.key === 'ArrowRight'){ readerNext(); }
       else if(e.key === 'ArrowLeft'){ readerPrev(); }
       else if(e.key === 'Escape'){ closeReader(); }
+      else if(e.key === 'b' || e.key === 'B'){ setBlackout(!blackoutMode); }
       return;
     }
     if(e.key === 'f' || e.key === 'F'){ addFrameMode = !addFrameMode; renderAll(); }
