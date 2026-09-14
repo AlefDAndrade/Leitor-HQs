@@ -45,6 +45,16 @@ from urllib.parse import urlparse, parse_qs
 MODEL_REPO = "mosesb/best-comic-panel-detection"
 MODEL_FILENAME = "best.pt"
 
+CONTENT_TYPE_TO_EXT = {
+    "image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
+    "image/webp": ".webp", "image/gif": ".gif", "image/bmp": ".bmp",
+}
+
+# Pasta do Kumiko (usado como "revisor" pra páginas onde o YOLO cobriu
+# pouca área da página -- ver run_kumiko_fallback() e o modo
+# "kumiko_review" do /detect).
+KUMIKO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kumiko")
+
 
 def clip(value, lo, hi):
     return max(lo, min(hi, value))
@@ -149,6 +159,61 @@ def sort_reading_order(boxes, rtl=False):
     return sorted(boxes, key=lambda b: (round(b["y"], 1), -b["x"] if rtl else b["x"]))
 
 
+def build_coverage_grid(boxes, width, height, grid_w=160):
+    """Marca, numa grade de análise, quais células estão cobertas por
+    algum quadro. Compartilhado entre detect_missing_regions() (acha
+    lacunas) e compute_coverage_fraction() (mede % coberto da página)."""
+    grid_h = max(1, round(grid_w * height / width))
+
+    def to_grid(x, y):
+        return int(x / width * grid_w), int(y / height * grid_h)
+
+    covered = [[False] * grid_w for _ in range(grid_h)]
+    for b in boxes:
+        gx1, gy1 = to_grid(b["x"], b["y"])
+        gx2, gy2 = to_grid(b["x"] + b["w"], b["y"] + b["h"])
+        for gy in range(max(0, gy1), min(grid_h, gy2 + 1)):
+            for gx in range(max(0, gx1), min(grid_w, gx2 + 1)):
+                covered[gy][gx] = True
+    return covered, grid_w, grid_h
+
+
+def compute_coverage_fraction(boxes, width, height):
+    """Fração da página (0..1) coberta por pelo menos um quadro. Usado
+    pelo modo "revisão do Kumiko" pra decidir se a marcação do YOLO ficou
+    boa o suficiente ou se vale a pena tentar o Kumiko nessa página."""
+    covered, grid_w, grid_h = build_coverage_grid(boxes, width, height)
+    covered_cells = sum(sum(row) for row in covered)
+    return covered_cells / (grid_w * grid_h)
+
+
+def run_kumiko_fallback(image_bytes, ext, rtl=False, min_panel_size_ratio=0.05):
+    """Roda o Kumiko de verdade (não o YOLO) numa página, e devolve o
+    resultado dele tal como sai -- sem recalcular ordem de leitura (o
+    Kumiko já entrega isso pronto) nem filtrar nada."""
+    import tempfile
+
+    if KUMIKO_DIR not in sys.path:
+        sys.path.insert(0, KUMIKO_DIR)
+    from kumikolib import Kumiko  # import local, só quando precisa
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(image_bytes)
+        tmp_path = tmp.name
+    try:
+        k = Kumiko({"rtl": rtl, "min_panel_size_ratio": min_panel_size_ratio})
+        k.parse_image(tmp_path)
+        infos = k.get_infos()[0]
+        width, height = infos["size"]
+        frames = [
+            {"x": x / width, "y": y / height, "w": w / width, "h": h / height, "inferred": False}
+            for (x, y, w, h) in infos["panels"]
+        ]
+        return frames
+    finally:
+        os.unlink(tmp_path)
+
+
 def detect_missing_regions(boxes, width, height, min_area_ratio=0.01, erosion_ratio=0.035, debug=False):
     """Acha áreas da página que sobraram sem nenhum quadro detectado por
     cima -- candidatas a quadros que o modelo "não viu". Funciona numa
@@ -159,18 +224,7 @@ def detect_missing_regions(boxes, width, height, min_area_ratio=0.01, erosion_ra
     da página), e trata cada blob que sobrar como um possível quadro
     perdido."""
     GRID_W = 160
-    GRID_H = max(1, round(GRID_W * height / width))
-
-    def to_grid(x, y):
-        return int(x / width * GRID_W), int(y / height * GRID_H)
-
-    covered = [[False] * GRID_W for _ in range(GRID_H)]
-    for b in boxes:
-        gx1, gy1 = to_grid(b["x"], b["y"])
-        gx2, gy2 = to_grid(b["x"] + b["w"], b["y"] + b["h"])
-        for gy in range(max(0, gy1), min(GRID_H, gy2 + 1)):
-            for gx in range(max(0, gx1), min(GRID_W, gx2 + 1)):
-                covered[gy][gx] = True
+    covered, GRID_W, GRID_H = build_coverage_grid(boxes, width, height, grid_w=GRID_W)
 
     uncovered = [[not c for c in row] for row in covered]
 
@@ -299,6 +353,11 @@ def make_handler(model, Image, app_root):
                 min_gap_area_ratio = float(query.get("min_gap_area_ratio", ["0.01"])[0])
             except ValueError:
                 min_gap_area_ratio = 0.01
+            kumiko_review = query.get("kumiko_review", ["0"])[0] in ("1", "true")
+            try:
+                kumiko_review_threshold = float(query.get("kumiko_review_threshold", ["0.7"])[0])
+            except ValueError:
+                kumiko_review_threshold = 0.7
 
             length = int(self.headers.get("Content-Length", 0) or 0)
             if length <= 0:
@@ -329,6 +388,18 @@ def make_handler(model, Image, app_root):
                 min_area = min_side_px * min_side_px
                 boxes = [b for b in boxes if box_area(b) >= min_area]
 
+                if kumiko_review:
+                    coverage = compute_coverage_fraction(boxes, width, height)
+                    print(f"[yolo-server] kumiko_review: cobertura BRUTA do YOLO = {coverage:.1%} "
+                          f"(antes do preenchimento de lacunas; limite: {kumiko_review_threshold:.0%})", file=sys.stderr)
+                    if coverage < kumiko_review_threshold:
+                        print("[yolo-server] kumiko_review: cobertura baixa -- remarcando com o Kumiko", file=sys.stderr)
+                        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip()
+                        ext = CONTENT_TYPE_TO_EXT.get(content_type, ".png")
+                        frames = run_kumiko_fallback(body, ext, rtl=rtl, min_panel_size_ratio=min_panel_size_ratio)
+                        self._respond_json(200, {"frames": frames, "engine_used": "kumiko", "yolo_coverage": coverage})
+                        return
+
                 if query.get("fill_gaps", ["1"])[0] not in ("0", "false"):
                     gaps = detect_missing_regions(boxes, width, height, min_area_ratio=min_gap_area_ratio, debug=True)
                     print(f"[yolo-server] fill_gaps: {len(gaps)} região(ões) recuperada(s)", file=sys.stderr)
@@ -347,7 +418,7 @@ def make_handler(model, Image, app_root):
                     for b in ordered
                 ]
 
-                self._respond_json(200, {"frames": frames})
+                self._respond_json(200, {"frames": frames, "engine_used": "yolo"})
             except Exception as e:  # noqa: BLE001
                 import traceback
                 traceback.print_exc(file=sys.stderr)

@@ -29,6 +29,7 @@
   const autoDetectBtn = el('auto-detect-btn');
   const autoDetectScopeEl = el('auto-detect-scope');
   const autoDetectRtlEl = el('auto-detect-rtl');
+  const autoDetectKumikoReviewEl = el('auto-detect-kumiko-review');
   let autoDetectRunning = false;
 
   function setStatus(msg){ statusEl.textContent = msg || ''; }
@@ -359,6 +360,7 @@
     autoDetectBtn.disabled = pages.length === 0 || autoDetectRunning;
     autoDetectScopeEl.disabled = autoDetectRunning;
     autoDetectRtlEl.disabled = autoDetectRunning;
+    autoDetectKumikoReviewEl.disabled = autoDetectRunning;
     autoDetectBtn.textContent = autoDetectRunning ? 'Detectando…' : '✨ Auto-detectar';
   }
 
@@ -638,6 +640,9 @@
       rtl: opts.rtl ? '1' : '0',
       min_panel_size_ratio: String(opts.minPanelSizeRatio != null ? opts.minPanelSizeRatio : 0.1),
     });
+    if(opts.kumikoReview){
+      params.set('kumiko_review', '1');
+    }
     const res = await fetch(KUMIKO_SERVER_URL + '/detect?' + params.toString(), {
       method: 'POST',
       headers: { 'Content-Type': blob.type || 'image/png' },
@@ -649,7 +654,7 @@
       throw new Error(msg);
     }
     const data = await res.json();
-    return data.frames || [];
+    return data;
   }
 
   autoDetectBtn.onclick = async () => {
@@ -657,6 +662,7 @@
 
     const scope = autoDetectScopeEl.value; // 'current' | 'all'
     const rtl = autoDetectRtlEl.checked;
+    const kumikoReview = autoDetectKumikoReviewEl.checked;
     const targets = scope === 'all' ? pages.map((_, i) => i) : [currentPageIndex];
 
     const hasExisting = targets.some(i => pages[i].frames.length > 0);
@@ -681,19 +687,26 @@
         );
       }
 
+      let kumikoRescueCount = 0;
       for(let i = 0; i < targets.length; i++){
         const pageIndex = targets[i];
         const page = pages[pageIndex];
         setStatus('Detectando quadros — página ' + (i+1) + '/' + targets.length + '…');
 
         const blob = await loadPageBlob(page.url);
-        const detected = await detectFramesViaServer(blob, { rtl });
+        const data = await detectFramesViaServer(blob, { rtl, kumikoReview });
+        const detected = data.frames || [];
         page.frames = detected.map(f => ({ id: frameIdSeq++, x: f.x, y: f.y, w: f.w, h: f.h }));
+        if(data.engine_used === 'kumiko') kumikoRescueCount++;
       }
 
-      setStatus(targets.length > 1
+      let finalMsg = targets.length > 1
         ? 'Quadros detectados em ' + targets.length + ' página(s). Confira e ajuste o que precisar.'
-        : 'Quadros detectados nesta página. Confira e ajuste o que precisar.');
+        : 'Quadros detectados nesta página. Confira e ajuste o que precisar.';
+      if(kumikoReview && kumikoRescueCount > 0){
+        finalMsg += ' (' + kumikoRescueCount + ' página(s) remarcada(s) com o Kumiko.)';
+      }
+      setStatus(finalMsg);
     }catch(err){
       console.error(err);
       setStatus('Não consegui detectar os quadros automaticamente.');
