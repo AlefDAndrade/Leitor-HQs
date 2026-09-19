@@ -54,7 +54,11 @@
           <select id="auto-detect-scope" title="Em quais páginas aplicar a detecção automática">
             <option value="current">nesta página</option>
             <option value="all">todas as páginas</option>
+            <option value="range">páginas específicas</option>
           </select>
+          <input type="text" id="auto-detect-range-input" placeholder="ex: 11-25 ou 11,13,16,19"
+                 title="Um intervalo (11-25), uma lista (11,13,16,19), ou os dois combinados (11-13,16,19-22)"
+                 style="display:none;">
           <label class="rtl-toggle" title="Ordem de leitura direita→esquerda (mangá)">
             <input type="checkbox" id="auto-detect-rtl"> mangá
           </label>

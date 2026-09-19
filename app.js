@@ -28,6 +28,43 @@
   const readBtn = el('read-btn');
   const autoDetectBtn = el('auto-detect-btn');
   const autoDetectScopeEl = el('auto-detect-scope');
+  const autoDetectRangeInputEl = el('auto-detect-range-input');
+  autoDetectScopeEl.addEventListener('change', () => {
+    autoDetectRangeInputEl.style.display = (autoDetectScopeEl.value === 'range') ? '' : 'none';
+  });
+
+  // Interpreta algo como "11-25", "11,13,16,19" ou uma combinação
+  // ("11-13,16,19-22"). Devolve índices de página 0-based (já validados
+  // dentro do total de páginas do arquivo), em ordem crescente e sem
+  // repetição, mais uma lista de erros (se algum trecho não fez sentido).
+  function parsePageRangeSpec(spec, totalPages){
+    const result = new Set();
+    const errors = [];
+    const parts = (spec || '').split(',').map(s => s.trim()).filter(Boolean);
+    if(parts.length === 0){
+      errors.push('Digite ao menos uma página ou intervalo (ex: 11-25).');
+      return { pages: [], errors };
+    }
+    for(const part of parts){
+      const rangeMatch = part.match(/^(\d+)\s*-\s*(\d+)$/);
+      if(rangeMatch){
+        let a = parseInt(rangeMatch[1], 10), b = parseInt(rangeMatch[2], 10);
+        if(a > b){ const t = a; a = b; b = t; }
+        for(let n = a; n <= b; n++) result.add(n);
+      } else if(/^\d+$/.test(part)){
+        result.add(parseInt(part, 10));
+      } else {
+        errors.push('"' + part + '" não é uma página ou intervalo válido.');
+      }
+    }
+    const nums = [...result];
+    const outOfRange = nums.filter(n => n < 1 || n > totalPages);
+    if(outOfRange.length){
+      errors.push('Página(s) fora do arquivo (tem ' + totalPages + ' no total): ' + outOfRange.join(', ') + '.');
+    }
+    const valid = nums.filter(n => n >= 1 && n <= totalPages).sort((a,b) => a-b);
+    return { pages: valid.map(n => n-1), errors };
+  }
   const autoDetectRtlEl = el('auto-detect-rtl');
   const autoDetectKumikoReviewEl = el('auto-detect-kumiko-review');
   let autoDetectRunning = false;
@@ -360,6 +397,7 @@
     autoDetectBtn.disabled = pages.length === 0 || autoDetectRunning;
     autoDetectScopeEl.disabled = autoDetectRunning;
     autoDetectRtlEl.disabled = autoDetectRunning;
+    autoDetectRangeInputEl.disabled = autoDetectRunning;
     autoDetectKumikoReviewEl.disabled = autoDetectRunning;
     autoDetectBtn.textContent = autoDetectRunning ? 'Detectando…' : '✨ Auto-detectar';
   }
@@ -660,15 +698,32 @@
   autoDetectBtn.onclick = async () => {
     if(autoDetectRunning || !pages.length || currentPageIndex === -1) return;
 
-    const scope = autoDetectScopeEl.value; // 'current' | 'all'
+    const scope = autoDetectScopeEl.value; // 'current' | 'all' | 'range'
     const rtl = autoDetectRtlEl.checked;
     const kumikoReview = autoDetectKumikoReviewEl.checked;
-    const targets = scope === 'all' ? pages.map((_, i) => i) : [currentPageIndex];
+
+    let targets;
+    if(scope === 'all'){
+      targets = pages.map((_, i) => i);
+    } else if(scope === 'range'){
+      const { pages: parsedPages, errors } = parsePageRangeSpec(autoDetectRangeInputEl.value, pages.length);
+      if(errors.length){
+        alert('Não consegui entender as páginas informadas:\n' + errors.join('\n'));
+        return;
+      }
+      if(!parsedPages.length){
+        alert('Digite ao menos uma página válida (ex: 11-25 ou 11,13,16,19).');
+        return;
+      }
+      targets = parsedPages;
+    } else {
+      targets = [currentPageIndex];
+    }
 
     const hasExisting = targets.some(i => pages[i].frames.length > 0);
     if(hasExisting){
-      const msg = scope === 'all'
-        ? 'Isso substitui as marcações já existentes nas páginas que já têm quadros marcados. Continuar?'
+      const msg = targets.length > 1
+        ? 'Isso substitui as marcações já existentes nas páginas selecionadas que já têm quadros marcados. Continuar?'
         : 'Isso substitui as marcações já existentes nesta página. Continuar?';
       if(!confirm(msg)) return;
     }
